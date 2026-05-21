@@ -1,16 +1,17 @@
 
 import logging
 import requests
+import time
 from dotenv import load_dotenv
 import os
-from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters, ContextTypes
  
 # === .env dan o'qish ===
 load_dotenv()
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 HF_API_KEY = os.getenv("HF_API_KEY")
 YOUR_TELEGRAM_ID = int(os.getenv("YOUR_TELEGRAM_ID"))
+ 
+BASE_URL = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
  
 # === PORTFOLIO ===
 PORTFOLIO_INFO = """
@@ -32,6 +33,30 @@ Qoidalar:
 """
  
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s", level=logging.INFO)
+ 
+# === Foydalanuvchi holati ===
+user_data = {}
+ 
+# === TELEGRAM API funksiyalari ===
+def send_message(chat_id, text, reply_markup=None, parse_mode=None):
+    payload = {"chat_id": chat_id, "text": text}
+    if reply_markup:
+        payload["reply_markup"] = reply_markup
+    if parse_mode:
+        payload["parse_mode"] = parse_mode
+    requests.post(f"{BASE_URL}/sendMessage", json=payload)
+ 
+def send_chat_action(chat_id, action="typing"):
+    requests.post(f"{BASE_URL}/sendChatAction", json={"chat_id": chat_id, "action": action})
+ 
+def get_updates(offset=None):
+    params = {"timeout": 30, "offset": offset}
+    try:
+        response = requests.get(f"{BASE_URL}/getUpdates", params=params, timeout=35)
+        return response.json()
+    except Exception as e:
+        logging.error(f"getUpdates xato: {e}")
+        return {"result": []}
  
 # === AI JAVOB ===
 def ask_ai(user_text: str, history: list) -> str:
@@ -64,85 +89,106 @@ def ask_ai(user_text: str, history: list) -> str:
         return text if text else "Tushunmadim, qayta yozing 😊"
     return "Hozir javob bera olmayapman, keyinroq urinib ko'ring."
  
-# === HANDLERLAR ===
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = [
-        [KeyboardButton("📋 Portfolio ko'rish")],
-        [KeyboardButton("✉️ Lobar'ga xabar yuborish")],
-        [KeyboardButton("📞 Aloqa ma'lumotlari")],
-    ]
-    await update.message.reply_text(
-        "👋 Salom! Men Lobar'ning portfolio botiman.\nIstalgan savol bering — javob beraman! 🤖",
-        reply_markup=ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
-    )
+# === KEYBOARD ===
+def main_keyboard():
+    return {
+        "keyboard": [
+            [{"text": "📋 Portfolio ko'rish"}],
+            [{"text": "✉️ Lobar'ga xabar yuborish"}],
+            [{"text": "📞 Aloqa ma'lumotlari"}],
+        ],
+        "resize_keyboard": True
+    }
  
-async def portfolio(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "👩‍💻 *Lobar haqida*\n\n"
-        "📌 Ism: Lobar\n"
-        "🎯 Soha: Python dasturchi (o'rganuvchi)\n"
-        "🛠 Ko'nikmalar: Python, Aiogram, HTML/CSS, Git\n"
-        "❤️ Sevimli mashg'ulot: Telegram botlar yaratish\n"
-        "🌐 Website: lobar.dev",
-        parse_mode="Markdown"
-    )
+# === XABARNI QAYTA ISHLASH ===
+def handle_message(chat_id, user_text, user):
+    if chat_id not in user_data:
+        user_data[chat_id] = {"history": [], "waiting_message": False}
  
-async def contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "📞 *Aloqa ma'lumotlari*\n\n"
-        "✈️ Telegram: @lobar\\_username\n"
-        "📧 Email: lobar@email.com\n"
-        "💻 GitHub: github.com/lobar\n"
-        "🌐 Website: lobar.dev",
-        parse_mode="Markdown"
-    )
+    data = user_data[chat_id]
  
-async def ai_reply(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_text = update.message.text
+    if user_text == "/start":
+        send_message(
+            chat_id,
+            "👋 Salom! Men Lobar'ning portfolio botiman.\nIstalgan savol bering — javob beraman! 🤖",
+            reply_markup=main_keyboard()
+        )
+        return
  
     if user_text == "📋 Portfolio ko'rish":
-        await portfolio(update, context)
-        return
-    elif user_text == "✉️ Lobar'ga xabar yuborish":
-        await update.message.reply_text("✏️ Xabaringizni yozing, Lobar'ga yetkazaman!")
-        context.user_data["waiting_message"] = True
-        return
-    elif user_text == "📞 Aloqa ma'lumotlari":
-        await contact(update, context)
+        send_message(
+            chat_id,
+            "👩‍💻 *Lobar haqida*\n\n"
+            "📌 Ism: Lobar\n"
+            "🎯 Soha: Python dasturchi (o'rganuvchi)\n"
+            "🛠 Ko'nikmalar: Python, Aiogram, HTML/CSS, Git\n"
+            "❤️ Sevimli mashg'ulot: Telegram botlar yaratish\n"
+            "🌐 Website: lobar.dev",
+            parse_mode="Markdown"
+        )
         return
  
-    if context.user_data.get("waiting_message"):
-        context.user_data["waiting_message"] = False
-        user = update.message.from_user
+    if user_text == "📞 Aloqa ma'lumotlari":
+        send_message(
+            chat_id,
+            "📞 *Aloqa ma'lumotlari*\n\n"
+            "✈️ Telegram: @lobar\\_username\n"
+            "📧 Email: lobar@email.com\n"
+            "💻 GitHub: github.com/lobar\n"
+            "🌐 Website: lobar.dev",
+            parse_mode="Markdown"
+        )
+        return
+ 
+    if user_text == "✉️ Lobar'ga xabar yuborish":
+        data["waiting_message"] = True
+        send_message(chat_id, "✏️ Xabaringizni yozing, Lobar'ga yetkazaman!")
+        return
+ 
+    if data.get("waiting_message"):
+        data["waiting_message"] = False
+        first_name = user.get("first_name", "")
+        username = user.get("username", "yoq")
         try:
-            await context.bot.send_message(
-                chat_id=YOUR_TELEGRAM_ID,
-                text=f"📨 Yangi xabar!\n👤 {user.first_name} (@{user.username or 'yoq'})\n💬 {user_text}"
+            send_message(
+                YOUR_TELEGRAM_ID,
+                f"📨 Yangi xabar!\n👤 {first_name} (@{username})\n💬 {user_text}"
             )
-            await update.message.reply_text("✅ Xabaringiz Lobar'ga yetkazildi!")
+            send_message(chat_id, "✅ Xabaringiz Lobar'ga yetkazildi!")
         except Exception:
-            await update.message.reply_text("❌ Xatolik yuz berdi.")
+            send_message(chat_id, "❌ Xatolik yuz berdi.")
         return
  
-    try:
-        await update.message.chat.send_action("typing")
-        history = context.user_data.get("history", [])
-        reply = ask_ai(user_text, history)
-        history.append({"role": "user", "content": user_text})
-        history.append({"role": "assistant", "content": reply})
-        context.user_data["history"] = history[-10:]
-        await update.message.reply_text(reply)
-    except Exception as e:
-        logging.error(f"Xato: {e}")
-        await update.message.reply_text("🤔 Hozir javob bera olmayapman, qayta urinib ko'ring.")
+    # AI javob
+    send_chat_action(chat_id)
+    history = data.get("history", [])
+    reply = ask_ai(user_text, history)
+    history.append({"role": "user", "content": user_text})
+    history.append({"role": "assistant", "content": reply})
+    data["history"] = history[-10:]
+    send_message(chat_id, reply)
  
+# === ASOSIY LOOP ===
 def main():
-    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("portfolio", portfolio))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, ai_reply))
     print("✅ Bot ishga tushdi!")
-    app.run_polling()
+    offset = None
+    while True:
+        updates = get_updates(offset)
+        for update in updates.get("result", []):
+            offset = update["update_id"] + 1
+            message = update.get("message", {})
+            if not message:
+                continue
+            chat_id = message["chat"]["id"]
+            user_text = message.get("text", "")
+            user = message.get("from", {})
+            if user_text:
+                try:
+                    handle_message(chat_id, user_text, user)
+                except Exception as e:
+                    logging.error(f"Xato: {e}")
+                    send_message(chat_id, "🤔 Hozir javob bera olmayapman, qayta urinib ko'ring.")
+        time.sleep(0.5)
  
 if __name__ == "__main__":
     main()
